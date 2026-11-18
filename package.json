@@ -1,0 +1,54 @@
+{
+  "name": "autogate",
+  "version": "1.0.0",
+  "description": "AutoGate security status, history inspector, live config sync, and session marks for OpenChamber",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "bunx openchamber-guest-bundle panel/main.ts panel/main.js && bunx openchamber-guest-bundle status/main.ts status/main.js && bunx openchamber-guest-bundle --node service/main.ts service/main.js",
+    "check": "bunx openchamber-guest-check",
+    "typecheck": "bunx tsc --noEmit",
+    "test": "bun test"
+  },
+  "openchamber": {
+    "apiVersion": 1,
+    "engines": {
+      "openchamber": ">=2.7.1"
+    },
+    "id": "autogate",
+    "name": "AutoGate",
+    "icon": "icon.svg",
+    "contributes": {
+      "capabilities": [
+        "sessions"
+      ],
+      "panel": {
+        "entry": "panel/index.html"
+      },
+      "service": {
+        "entry": "service/main.js",
+        "runtime": "host",
+        "keepRunning": true
+      },
+      "statusSection": {
+        "entry": "status/index.html",
+        "title": "AutoGate",
+        "height": 180
+      },
+      "marks": true
+    }
+  },
+  "dependencies": {
+    "@openchamber/sdk": "2.7.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "@types/node": "^26.6.6",
+    "playwright": "^1.65.0",
+    "typescript": "^7.0.2"
+  },
+  "peerDependencies": {
+    "typescript": "^7"
+  }
+}
