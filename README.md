@@ -1,97 +1,94 @@
-# AutoGate
+# AutoGate extension for OpenChamber
 
-AutoGate security status, evaluation history inspector, live configuration sync, and session marks extension for [OpenChamber](https://github.com/btriapitsyn/openchamber) (`@openchamber/sdk`, `apiVersion: 1`, requires OpenChamber `>=2.7.1`).
+Monitors AutoGate permission evaluations in OpenChamber with a filterable history inspector, live mode and fallback controls, circuit-breaker status, Work Status popovers, and sidebar session marks.
 
-## Features & Surfaces
+## Setup
 
-- **Panel (`panel/index.html` → `panel/main.js`)**:
-  - Toggle `Auto Mode` (`autoMode`) and switch the review fallback mode between `ntfy` (remote/mobile) and `native` (terminal prompt).
-  - Monitor System 1 health, live runtime count, evaluation stats, and circuit breaker state (`consecutiveBlocks / threshold`) with one-click breaker reset.
-  - Filter evaluation history by verdict (`All`, `ALLOW`, `BLOCK`, `UNSURE`), search across tool, command, reasoning, user prompt, and session ID, or scope to the current session.
-  - Inspect full evaluation details including command preview, reasoning, user prompt, risk level, authorization level, latency, model, and System 1 / System 2 cascade trace (`winner`, `escalationReason`, `s1LatencyMs`, `s2LatencyMs`, `s2Aborted`, `inScopeScore`, `injectionScore`, `s1Probs`).
-  - Polls `GET /api/state` every 2.5 seconds.
-- **Work Status (`status/index.html` → `status/main.js`, title `AutoGate`, initial height `180px`)**:
-  - Compact status pills for Auto Mode, fallback mode, System 1 status, and circuit breaker reset.
-  - Lists up to 5 recent sessions (active in-flight sessions first, then newest activity), resolving session titles via the host `sessions` capability (`host.listProjects` / `host.listSessions`).
-  - Clicking a session opens an anchored popover (`surface: "popover"`) when `features.popovers` is supported—or an inline detail drawer otherwise—showing up to 6 recent evaluations, cascade trace, `Jump to session` (for `ses_*` IDs), `Copy session ID`, and `Copy command`.
-- **Host Service (`service/main.js`, `runtime: "host"`, `keepRunning: true`)**:
-  - Listens on `127.0.0.1:$OPENCHAMBER_SERVICE_PORT` and requires `Authorization: Bearer $OPENCHAMBER_SERVICE_TOKEN` on all routes (including `/health`).
-  - Periodically syncs sidebar session marks every 3 seconds via `ServiceHost.setMark` (enabled via `contributes.marks: true`):
-    - `shield` (`warning`): action awaiting review (`inFlight[].awaitingReview`)
-    - `close-circle` (`error`): latest verdict `BLOCK` within the last 15 minutes
-    - `alert` (`warning`): latest verdict `UNSURE` within the last 15 minutes
-    - Clears stale (>15 minutes) or `ALLOW`-resolved marks.
-  - Normalizes both OpenCode flat JSONL and OMP nested (`action`/`decision`/`inference`/`model`) evaluation logs, reading up to the latest 512 KB / 200 entries.
-  - Redacts `ntfyToken` and `systemOne.apiKey` from all API responses and status views (exposing only `hasNtfyToken` and `systemOne.hasApiKey`), and preserves unrelated keys/secrets when updating `config.json`.
+### Prerequisites
 
-## Service Endpoints
+1. OpenChamber `>= 2.7.1`.
+2. An AutoGate-enabled OpenCode or OMP setup writing AutoGate config, runtime state, and evaluation logs.
 
-All endpoints require `Authorization: Bearer $OPENCHAMBER_SERVICE_TOKEN`:
+### Enable in OpenChamber
 
-- `GET /health` — Health check (`{ ok: true }`).
-- `GET /status` — Returns a `GuestStatusView` (up to 16 rows) for host status rendering.
-- `POST /status` — Handles `GuestStatusActionEvent` payloads (`toggle-automode`, `set-fallback`, `reset-breaker`).
-- `GET /api/state` — Returns an `AutoGateStateSnapshot` (supports optional query params `directory`, `sessionId`, `verdict`, and `q`).
-- `POST /api/action` — Applies live state mutations and returns `{ ok: true, state }`:
-  - `{ "action": "setAutoMode", "enabled": boolean }`
-  - `{ "action": "setFallbackMode", "mode": "ntfy" | "native" }`
-  - `{ "action": "resetBreaker" }`
+1. Open **Settings → Extensions** and add the `autogate` folder (or repository URL).
+2. Approve the requested permissions (background service, session list access for titles and navigation, and sidebar session marks).
 
-## Configuration & Environment Variables
+### Config and log files
 
-### Config & State Files
+AutoGate resolves its config directory from `$AUTOGATE_CONFIG` (using its parent directory), `$XDG_CONFIG_HOME/autogate`, or `~/.config/autogate`:
 
-`config.json` path resolution order:
-1. `$AUTOGATE_CONFIG` (with `configDir` set to its parent directory)
-2. `$XDG_CONFIG_HOME/autogate/config.json`
-3. `~/.config/autogate/config.json` (default)
+- **`config.json`**: AutoGate settings (`autoMode`, `reviewFallbackMode`, `classifierModel`, `classifierTimeout`, `consecutiveBlockThreshold`, `notifyOnVerdict`, `ntfyServer`, `ntfyTopic`, `ntfyToken`, `evalLogFile`, and `systemOne.*`). Secrets (`ntfyToken` and `systemOne.apiKey`) are redacted from UI state and preserved when OpenChamber updates settings.
+- **`runtime/*.json`**: Live per-process runtime state files (active runtimes are filtered by PID liveness).
+- **`control.json`**: Stores `resetCircuitBreakerAt` when you reset the circuit breaker from OpenChamber.
+- **Evaluation log**: Resolved from an active runtime's `evalLogFile`, `$AUTOGATE_EVAL_LOG`, `evalLogFile` / `omp.evalLogFile` in `config.json`, or `~/.omp/logs/autogate-evals.jsonl` (supports both OpenCode flat JSONL and OMP nested entries; reads up to the latest 512 KB / 200 entries).
 
-Additional files inside `configDir`:
-- `runtime/*.json` — Live runtime state files written by AutoGate hooks (filtered by PID liveness via `process.kill(pid, 0)`).
-- `control.json` — Stores `resetCircuitBreakerAt` when the circuit breaker is reset.
-
-Evaluation log file resolution order:
-1. Active runtime `evalLogFile` (if present)
-2. `$AUTOGATE_EVAL_LOG`
-3. `evalLogFile` or `omp.evalLogFile` in `config.json`
-4. `~/.omp/logs/autogate-evals.jsonl` (default)
-
-### Environment Variable Overrides
-
-| Variable | `config.json` Key | Default |
-| --- | --- | --- |
+| Environment variable | Overrides `config.json` key | Default |
+|---|---|---|
 | `AUTOGATE_CONFIG` | — | `~/.config/autogate/config.json` |
 | `AUTOGATE_EVAL_LOG` | `evalLogFile` / `omp.evalLogFile` | `~/.omp/logs/autogate-evals.jsonl` |
 | `AUTOGATE_AUTO_MODE` / `OPENCODE_AUTO_MODE` | `autoMode` | `true` |
-| `AUTOGATE_FALLBACK` | `reviewFallbackMode` / `fallbackMode` / `omp.reviewFallbackMode` | `"ntfy"` (`"ntfy"` or `"native"`) |
+| `AUTOGATE_FALLBACK` | `reviewFallbackMode` / `fallbackMode` | `"ntfy"` (`"ntfy"` or `"native"`) |
 | `CLASSIFIER_MODEL` | `classifierModel` | `"google/gemini-3.5-flash-lite"` |
 | `CLASSIFIER_TIMEOUT` | `classifierTimeout` | `45000` (ms) |
 | `CONSECUTIVE_BLOCK_THRESHOLD` | `consecutiveBlockThreshold` | `3` |
 | `AUTOGATE_NOTIFY_ON_VERDICT` | `notifyOnVerdict` | `true` |
 | `NTFY_SERVER` | `ntfyServer` | `"https://ntfy.sh"` |
 | `AUTOGATE_NTFY_TOPIC` / `NTFY_TOPIC` | `ntfyTopic` | `"autogate"` |
-| `NTFY_TOKEN` / `AUTOGATE_NTFY_TOKEN` | `ntfyToken` | — (redacted) |
+| `NTFY_TOKEN` / `AUTOGATE_NTFY_TOKEN` | `ntfyToken` | — |
 | `AUTOGATE_SYSTEM_ONE_ENABLED` | `systemOne.enabled` | `false` |
 | `AUTOGATE_SYSTEM_ONE_MODE` | `systemOne.executionMode` | `"race"` (`"race"` or `"cascade"`) |
 | `AUTOGATE_SYSTEM_ONE_ENDPOINT` | `systemOne.endpoint` | `"http://127.0.0.1:4006/v1/systemone"` |
 | `AUTOGATE_SYSTEM_ONE_MODEL` | `systemOne.model` | `"gemini-decision-1"` |
 | `AUTOGATE_SYSTEM_ONE_TIMEOUT_MS` | `systemOne.timeoutMs` | `4000` (ms) |
-| `AUTOGATE_SYSTEM_ONE_API_KEY` | `systemOne.apiKey` | — (redacted) |
+| `AUTOGATE_SYSTEM_ONE_API_KEY` | `systemOne.apiKey` | — |
 
-When launched by OpenChamber, the host also injects `OPENCHAMBER_SERVICE_PORT`, `OPENCHAMBER_SERVICE_TOKEN`, and `OPENCHAMBER_HOST_CALLBACK_URL`.
+## Using AutoGate in OpenChamber
+
+### AutoGate panel
+
+Open the **AutoGate** panel (auto-refreshes every 2.5 seconds, or click **Refresh**) to configure and inspect evaluations:
+
+- **Controls card**: Toggle **Auto Mode** (automatic classification vs Manual mode), switch **Fallback** between `ntfy (Remote)` and `native (Terminal)`, check **System 1** health (`disabled`, `reachable`, or `unreachable`), monitor **Breaker** (`consecutiveBlocks/threshold` with **Reset Breaker** when > 0), and view aggregate counts, average latency, and System 1 fast-path percentage.
+- **Alert banner**: Surfaces actions currently awaiting review or a tripped circuit breaker with a one-click **Reset Breaker** button.
+- **History & Evaluation Detail**: Filter by verdict tab (**All**, **ALLOW**, **BLOCK**, **UNSURE**), search across tool, command, reason, user prompt, and session ID, or toggle **Current session**. Selecting an entry opens **Evaluation Detail** with verdict, risk, authorization, System 1/System 2 badges, command/action text, reasoning, user prompt, and cascade trace metrics (`Cascade Mode`, `Winner`, `Escalation`, `S1 Latency`, `S2 Latency`, `S2 Aborted`, `In-Scope`, `Injection`, `S1 Probs`).
+
+### Work Status section
+
+The **AutoGate** section in Work Status provides:
+
+- **Control pills**: Toggle `Auto: ON` / `Manual`, switch `ntfy` / `native` fallback, inspect System 1 status (`S1 off`, `S1 <mode> · up`, `S1 down`), and **Reset** a non-zero circuit breaker.
+- **Summary line**: Aggregate `ALLOW`, `BLOCK`, and `UNSURE` counts plus average latency.
+- **Recent Sessions**: Lists up to 5 recent sessions (active in-flight sessions first, using OpenChamber session titles when available). Clicking a session opens a popover (or inline drawer when popovers are unavailable) with session counts, status badge (`Awaiting Review`, `Evaluating`, `Blocked`, `Needs Review`, `Clean`), up to 6 recent evaluations, and **Jump to session** (for `ses_*` sessions), **Copy session ID**, and **Copy command** buttons.
+
+### Sidebar session marks
+
+AutoGate runs a background service loop (every 3 seconds) that badges sessions in the OpenChamber sidebar:
+
+- **Shield (warning)**: `Awaiting AutoGate review` while an in-flight action is waiting on review.
+- **Close circle (error)**: `Blocked by AutoGate` when the latest verdict within the last 15 minutes is `BLOCK`.
+- **Alert (warning)**: `Flagged UNSURE by AutoGate` when the latest verdict within the last 15 minutes is `UNSURE`.
+
+Marks clear automatically when a session resolves with `ALLOW` or after 15 minutes.
+
+### How the pieces fit together
+
+```text
+  config.json + runtime/*.json + evals.jsonl + System 1 /health
+        │                                            ▲
+        ▼                                            │ writes config.json
+  AutoGate background service (3s mark sync) ────────┤ & control.json
+        │                                            │
+        ├──► AutoGate Panel (controls, filters, detail inspector)
+        ├──► Work Status (pills, recent sessions, detail popover)
+        └──► Sidebar Session Marks (shield / close-circle / alert)
+```
 
 ## Development
 
 ```bash
-bun install
-bun run build       # Bundle panel/main.js, status/main.js, and service/main.js
-bun run typecheck   # Run tsc --noEmit
-bun run check       # Run openchamber-guest-check
-bun test            # Run service unit tests and Playwright UI harness tests
+bun run build
+bun run check
+bun run typecheck
+bun test
 ```
-
-> Note: `test/ui.playwright.test.ts` launches headless Chromium via Playwright and saves verification screenshots under `/tmp/opencode`.
-
-## License
-
-MIT — see [LICENSE](./LICENSE).
